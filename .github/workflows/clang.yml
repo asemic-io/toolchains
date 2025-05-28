@@ -13,8 +13,8 @@ on:
         description: "Type of runner to use/architecture to build for."
         type: choice
         options:
-          - depot-ubuntu-24.04-64
-          - depot-ubuntu-24.04-arm-64
+          - ubuntu-22.04
+          - ubuntu-22.04-arm
       cpu_target:
         description: "Type of CPU to optimize for. (-mcpu)"
         type: string
