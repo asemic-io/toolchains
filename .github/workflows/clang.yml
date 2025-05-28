@@ -13,8 +13,8 @@ on:
         description: "Type of runner to use/architecture to build for."
         type: choice
         options:
-          - toolchains-ubuntu-22.04-x86
-          - toolchains-ubuntu-22.04-arm
+          - depot-ubuntu-24.04-64
+          - depot-ubuntu-24.04-arm-64
       cpu_target:
         description: "Type of CPU to optimize for. (-mcpu)"
         type: string
@@ -40,7 +40,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Clone MaterializeInc/toolchains repo
+      - name: Clone asemic-io/toolchains repo
         uses: actions/checkout@v4
 
       - name: Get args
