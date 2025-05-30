@@ -1,9 +1,12 @@
 clang
 clang-$clang_major
 clang-cl
+clang-format
 clang-cpp
 clang++
+clangd
 clang-tblgen
+clang-tidy
 lld
 ld.lld
 ld64.lld

@@ -69,7 +69,7 @@ cmake -G Ninja -S llvm -B build \
     -DCMAKE_CXX_FLAGS="-flto=thin -pthread -fPIC -O3 -DNDEBUG $target_cpu_arg $target_arch_arg" \
     -DCMAKE_SHARED_LINKER_FLAGS="-fPIC" \
     -DCMAKE_INTERPROCEDURAL_OPTIMIZATION="on" \
-    -DLLVM_ENABLE_PROJECTS="clang;lld" \
+    -DLLVM_ENABLE_PROJECTS="clang;lld;clang-tools-extra" \
     -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi;libunwind;compiler-rt" \
     -DLLVM_DISTRIBUTION_COMPONENTS="clang-resource-headers" \
     -DCMAKE_C_COMPILER="$c_binary" \
@@ -111,6 +111,9 @@ cmake --build build --target \
     llvm-dwarfdump \
     llvm-libtool-darwin \
     llvm-nm \
+    clang-tidy \
+    clang-format \
+    clangd \
     llvm-objcopy \
     llvm-objdump \
     llvm-profdata \
