@@ -1,0 +1,3 @@
+sysroot/sysroot-*-x86_64/
+sysroot/sysroot-*-aarch64/
+*.tar.*
