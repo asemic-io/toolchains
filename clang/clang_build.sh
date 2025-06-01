@@ -82,6 +82,8 @@ cmake -G Ninja -S llvm -B build \
     -DLIBCXX_USE_COMPILER_RT=ON \
     -DLIBCXXABI_USE_COMPILER_RT=ON \
     -DLIBCXXABI_USE_LLVM_UNWINDER=ON \
+    -DCLANG_DEFAULT_CXX_STDLIB=libc++ \
+    -DCLANG_DEFAULT_RTLIB=compiler-rt \
     -DLLVM_ENABLE_LTO=Thin \
     -DLLVM_ENABLE_PIC=ON \
     -DLLVM_ENABLE_THREADS=ON \
@@ -139,6 +141,8 @@ cmake -G Ninja -S llvm -B build_libclang \
     -DCMAKE_CXX_STANDARD=17 \
     -DLLVM_STATIC_LINK_CXX_STDLIB=ON \
     -DLLVM_USE_LINKER="$lld_binary" \
+    -DCLANG_DEFAULT_CXX_STDLIB=libc++ \
+    -DCLANG_DEFAULT_RTLIB=compiler-rt \
     -DLLVM_ENABLE_LIBCXX=ON \
     -DLLVM_ENABLE_LTO=Thin \
     -DLLVM_ENABLE_PIC=ON \
