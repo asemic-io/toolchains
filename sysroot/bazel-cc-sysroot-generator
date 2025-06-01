@@ -1,0 +1,391 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+from typing import Any, Generator
+import argparse
+import collections
+import contextlib
+import fnmatch
+import gzip
+import json
+import multiprocessing.pool
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.error
+import urllib.request
+import zstandard as zstd
+
+try:
+    import tomllib as tl
+except ImportError:
+    try:
+        import toml as tl  # type: ignore
+    except ImportError:
+        tl = None  # type: ignore
+
+
+_SUPPORTED_OS = {
+    "bionic",
+    "focal",
+    "jammy",
+    "noble",
+}
+
+
+Arch = collections.namedtuple("Arch", ["id", "ubuntu_id", "ubuntu_mirror"])
+MirrorInfo = collections.namedtuple("MirrorInfo", ["url", "files"])
+
+ARM64 = Arch("aarch64", "arm64", "http://ports.ubuntu.com/ubuntu-ports")
+X86_64 = Arch("x86_64", "amd64", "http://us.archive.ubuntu.com/ubuntu")
+
+_PPA_URL = "http://ppa.launchpad.net"
+
+
+@contextlib.contextmanager
+def restore_pwd() -> Generator[Any, Any, Any]:
+    pwd = os.getcwd()
+    try:
+        yield
+    finally:
+        os.chdir(pwd)
+
+
+def _get_required(obj: dict[str, Any], key: str) -> Any:
+    if key not in obj or not obj[key]:
+        raise SystemExit(f"error: {key} must exist and be non null")
+
+    return obj[key]
+
+
+def _setup_sysroot(suffix: str, temp_dir: Path) -> Path:
+    sysroot_dir = temp_dir / f"sysroot-{suffix}"
+    if sysroot_dir.is_dir():
+        shutil.rmtree(sysroot_dir)
+    elif sysroot_dir.exists():
+        sysroot_dir.unlink()
+    if sysroot_dir.exists():
+        raise SystemExit(
+            f"error: failed to remove '{sysroot_dir}', please delete it and re-run"
+        )
+    sysroot_dir.mkdir()
+    return sysroot_dir
+
+
+def _find_data_archive(dirname: Path) -> Path:
+    for ext in ("zst", "zstd", "xz"):
+        path = dirname / f"data.tar.{ext}"
+        if path.exists():
+            return path
+    raise ValueError(f"error: failed to find data.tar.zst or data.tar.xz in {dirname}")
+
+
+def _download_and_extract_package(name: str, url: str, package_dir: Path) -> None:
+    name = url.split("/")[-1]
+    output_path = Path(f"/tmp/{name}.deb")
+    try:
+        urllib.request.urlretrieve(url, output_path)
+    except urllib.error.HTTPError as e:
+        print(
+            f"error: failed to download {name} from {url}: {e}",
+            file=sys.stderr,
+        )
+        raise
+    with tempfile.TemporaryDirectory() as dirname:
+        with restore_pwd():
+            os.chdir(dirname)
+            subprocess.check_output(["ar", "x", output_path])
+            archive = _find_data_archive(Path(dirname))
+            package_dir.mkdir(parents=True, exist_ok=True)
+            subprocess.check_output(
+                [
+                    "tar",
+                    "xf",
+                    archive,
+                    "-C",
+                    package_dir,
+                ]
+            )
+
+
+def _download_package_list(
+    ubuntu_release: str, repository: str, arch: Arch
+) -> tuple[Path, str]:
+    package_archive = Path(
+        f"/tmp/packages-{ubuntu_release}-{repository.replace('/', '_')}-{arch.id}.gz"
+    )
+    mirror_url = arch.ubuntu_mirror
+    is_ppa_repository = repository.startswith("ppa:")
+    if is_ppa_repository:
+        repository = repository.lstrip("ppa:")
+        mirror_url = f"{_PPA_URL}/{repository}/ubuntu"
+    if not package_archive.exists():
+        print(
+            f"Downloading package list for {ubuntu_release}-{repository}-{arch.id}..."
+        )
+        if is_ppa_repository:
+            package_url = f"{mirror_url}/dists/{ubuntu_release}/main/binary-{arch.ubuntu_id}/Packages.gz"
+        else:
+            package_url = f"{mirror_url}/dists/{ubuntu_release}/{repository}/binary-{arch.ubuntu_id}/Packages.gz"
+        # TODO: progress reporting
+        urllib.request.urlretrieve(package_url, package_archive)
+    return package_archive, mirror_url
+
+
+def _download_packages(
+    ubuntu_release: str,
+    arch: Arch,
+    repositories: set[str],
+    packages: set[str],
+    sysroot_dir: Path,
+) -> None:
+    repo_to_mirror_info = {}
+    for repo in repositories:
+        package_archive, mirror_url = _download_package_list(ubuntu_release, repo, arch)
+        with gzip.open(package_archive, "rb") as f:
+            repo_to_mirror_info[repo] = MirrorInfo(
+                mirror_url,
+                [
+                    x
+                    for x in f.read().decode().splitlines()
+                    if x.startswith("Filename: ")
+                ],
+            )
+
+    package_urls = {}
+    needed_packages = set(packages)
+    for repo, mirror_info in repo_to_mirror_info.items():
+        for filename in mirror_info.files:
+            if not needed_packages:
+                break
+            for package in needed_packages:
+                # Filename: pool/main/c/curl/libcurl4-openssl-dev_7.68.0-1ubuntu2_amd64.deb
+                last_component = filename.split("/")[-1]
+                if last_component.startswith(f"{package}_"):
+                    package_urls[package] = (
+                        f"{mirror_info.url}/{filename.split(' ')[-1]}"
+                    )
+                    needed_packages.remove(package)
+                    break
+
+    if needed_packages:
+        raise SystemExit(
+            "Failed to find some packages, please report this issue: {}".format(
+                " ".join(sorted(needed_packages))
+            )
+        )
+
+    pool = multiprocessing.pool.Pool()
+    results = []
+    for name, package_url in package_urls.items():
+        results.append(
+            pool.apply_async(
+                _download_and_extract_package,
+                (name, package_url, sysroot_dir.absolute()),
+            )
+        )
+
+    pool.close()
+    pool.join()
+
+    for result in results:
+        if not result.successful():
+            raise SystemExit(f"error: {result.get()}")
+
+
+def _cleanup_linux_sysroot(
+    arch: Arch,
+    deleted_patterns: list[str],
+    sysroot_dir: Path,
+) -> None:
+    broken_libraries_dir = Path("usr") / "lib" / f"{arch.id}-linux-gnu"
+    destination_dir = Path("lib") / f"{arch.id}-linux-gnu"
+
+    with restore_pwd():
+        os.chdir(sysroot_dir.absolute())
+        _remove_matching_patterns(Path("."), deleted_patterns)
+        _fix_package_symlinks(broken_libraries_dir, destination_dir)
+        _fix_package_symlinks(Path("lib64"), destination_dir)
+
+    _validate_relative_symlinks(sysroot_dir)
+
+
+def _write_bazel_files(sysroot_dir: Path) -> None:
+    name = sysroot_dir.name
+    (sysroot_dir / "BUILD.bazel").write_text(f"""\
+load("@bazel_skylib//rules/directory:directory.bzl", "directory")
+
+directory(
+    name = "root",
+    srcs = glob(["**/*"]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "{name}",
+    srcs = glob(["**"]),
+    visibility = ["//visibility:public"],
+)
+""")
+    (sysroot_dir / "MODULE.bazel").write_text(f"""\
+module(name = "{name}")
+
+bazel_dep(name = "bazel_skylib", version = "1.7.1")
+""")
+
+
+def _archive(sysroot_dir: Path, output_dir: Path) -> None:
+    # https://stackoverflow.com/questions/1094841/get-a-human-readable-version-of-a-file-size
+    def sizeof_fmt(num: float) -> str:
+        for unit in ("", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"):
+            if abs(num) < 1024.0:
+                return f"{num:3.1f} {unit}B"
+            num /= 1024.0
+        return f"{num:.1f} YiB"
+
+    output = output_dir / f"{sysroot_dir.name}.tar.zst"
+    output.unlink(missing_ok=True)
+
+    compressor = zstd.ZstdCompressor(level=19)
+    with open(output, 'wb') as output_file:
+        with compressor.stream_writer(output_file) as writer:
+            with tarfile.open(fileobj=writer, mode='w|') as tar:
+                tar.add(sysroot_dir, arcname="")
+
+    size = float(output.stat().st_size)
+    print(f"{output}: {sizeof_fmt(size)}")
+
+
+def _fix_package_symlinks(broken_libraries_dir: Path, destination_dir: Path) -> None:
+    if not broken_libraries_dir.exists() or not destination_dir.exists():
+        return
+
+    relative_root = Path(".")
+    for _ in range(0, len(broken_libraries_dir.parts)):
+        relative_root /= ".."
+
+    relative_root /= destination_dir
+    for lib in broken_libraries_dir.glob("*.so*"):
+        # Skip normal files
+        if not lib.is_symlink():
+            continue
+
+        # Skip symlinks to relative paths that already exist inside the sysroot
+        # TODO: this should validate the relative-ness actually lives inside the sysroot
+        if not lib.readlink().is_absolute():
+            continue
+
+        dest = relative_root / lib.readlink().name
+        lib.unlink()
+        lib.symlink_to(dest)
+
+        if not lib.exists():
+            print(
+                f"WARNING: deleting dead symlink: {lib} (you might want to install the providing package instead)"
+            )
+            lib.unlink()
+
+
+def _remove_matching_patterns(sysroot: Path, patterns: list[str]) -> None:
+    def _should_delete(name: Path, patterns: list[str]) -> bool:
+        return any(fnmatch.fnmatch(str(name), x) for x in patterns)
+
+    for root, dirs, files in os.walk(str(sysroot)):
+        for dir in dirs:
+            path = Path(root) / dir
+            if _should_delete(path, patterns):
+                shutil.rmtree(path)
+
+        for file in files:
+            path = Path(root) / file
+            if _should_delete(path, patterns):
+                path.unlink()
+
+
+# NOTE: this should be solved by the symlink re-writing, but this is another safety net
+def _validate_relative_symlinks(root: Path) -> None:
+    for _, _, files in os.walk(str(root)):
+        for file in files:
+            path = Path(root) / file
+            if path.is_symlink():
+                if path.readlink().absolute():
+                    raise SystemExit(f"{path}: error: expected a relative symlink")
+
+
+def _generate_ubuntu_sysroot(os_name: str, platform: dict[str, Any], temp_dir: Path, output_dir: Path) -> None:
+    packages = set(_get_required(platform, "packages"))
+    repositories = set(platform.get("repositories") or ["main"])
+    deleted_patterns = platform.get("deleted_patterns") or []
+    archs = _get_required(platform, "archs")
+    for arch_str in archs:
+        if arch_str in ("aarch64", "arm64"):
+            arch = ARM64
+        elif arch_str in ("amd64", "x86_64"):
+            arch = X86_64
+        else:
+            raise SystemExit(
+                f"error: unsupported arch '{arch_str}', valid options: aarch64, x86_64"
+            )
+
+        sysroot_dir = _setup_sysroot(f"{os_name}-{arch.id}", temp_dir)
+        _download_packages(os_name, arch, repositories, packages, sysroot_dir)
+        _cleanup_linux_sysroot(arch, deleted_patterns, sysroot_dir)
+        _write_bazel_files(sysroot_dir)
+        _archive(sysroot_dir, output_dir)
+
+
+
+
+def _main(platforms: list[dict[str, Any]]) -> None:
+    output_dir = Path.cwd()
+    with tempfile.TemporaryDirectory() as temp_dir_str:
+        temp_dir = Path(temp_dir_str)
+        for platform in platforms:
+            os_name = _get_required(platform, "os")
+            if os_name not in _SUPPORTED_OS:
+                raise SystemExit(
+                    f"error: unsupported os '{os_name}', valid options: {', '.join(sorted(_SUPPORTED_OS))}"
+                )
+
+            _generate_ubuntu_sysroot(os_name, platform, temp_dir, output_dir)
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--config",
+        help="The config file to read from, defaults to 'sysroot-config.(toml|json)'",
+    )
+    return parser
+
+
+if __name__ == "__main__":
+    args = _build_parser().parse_args()
+    config_file = args.config
+    if not config_file:
+        if os.path.exists("sysroot-config.json"):
+            config_file = "sysroot-config.json"
+        else:
+            config_file = "sysroot-config.toml"
+
+    if not os.path.exists(config_file):
+        raise SystemExit(
+            f"{config_file}: error: file does not exist, use --config to pass another path"
+        )
+
+    with open(config_file) as f:
+        contents = f.read()
+        try:
+            config = json.loads(contents)
+        except json.JSONDecodeError:
+            if not tl:
+                raise SystemExit(
+                    "error: to use toml, either use python3.11 or run 'pip3 install toml'. Otherwise use json instead"
+                )
+            config = tl.loads(contents)
+
+    platforms = _get_required(config, "platforms")
+    _main(platforms)
