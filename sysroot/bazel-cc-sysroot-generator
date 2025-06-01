@@ -246,7 +246,7 @@ def _archive(sysroot_dir: Path, output_dir: Path) -> None:
             num /= 1024.0
         return f"{num:.1f} YiB"
 
-    output = output_dir / f"{sysroot_dir.name}.tar.zst"
+    output = output_dir / f"linux-{sysroot_dir.name}.tar.zst"
     output.unlink(missing_ok=True)
 
     compressor = zstd.ZstdCompressor(level=19)
