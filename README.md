@@ -1,6 +1,4 @@
-<div align="center">
-  <h1><code>toolchains</code></h1>
-</div>
+# `toolchains`
 
 ### About
 
@@ -8,7 +6,7 @@ This repository contains Github Actions to build and package Rust and C toolchai
 
 #### Rust
 
-Currently we just re-compress the Rust toolchains from `static.rust-lang.org` with [`zstd`](https://github.com/facebook/zstd)
+Currently, we just re-compress the Rust toolchains from `static.rust-lang.org` with [`zstd`](https://github.com/facebook/zstd)
 which has much faster decompression times than the default `LZMA2` algorithm typically used with `.tar.xz` package.
 
 #### C (Clang)
