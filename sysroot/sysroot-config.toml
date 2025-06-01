@@ -1,0 +1,24 @@
+[[platforms]]
+os = "bionic"
+archs = ["aarch64", "x86_64"]
+
+# Only put in here very intrinsic base system libraries
+# ... what counts as a system library is a bit subjective, but generally
+# 1. It is highly ABI stable in terms of _forward compatibility_ (think glibc)
+# 2. It is not tied to language versions (e.g. we use libc++ over libstdc++)
+# 3. You would expect to find it on a fresh installed linux 
+# 4. Its LGPL, GPL or other copyleft (e.g. glibc)
+# 5. Its tied to make hardware go (e.g. libusb)
+# 6. Its tied to foundations of linux (e.g. libsystemd)
+#
+# Everything else should either come from the toolchain (e.g. llvm -> asan,
+# compiler_rt, libc++) or be built in tree
+packages = [
+  "libc6-dev",
+]
+
+deleted_patterns = [
+  "etc",
+  "usr/bin",
+  "usr/share/doc",
+]
