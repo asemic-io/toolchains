@@ -341,16 +341,15 @@ def _generate_ubuntu_sysroot(os_name: str, platform: dict[str, Any], temp_dir: P
 
 def _main(platforms: list[dict[str, Any]]) -> None:
     output_dir = Path.cwd()
-    with tempfile.TemporaryDirectory() as temp_dir_str:
-        temp_dir = Path(temp_dir_str)
-        for platform in platforms:
-            os_name = _get_required(platform, "os")
-            if os_name not in _SUPPORTED_OS:
-                raise SystemExit(
-                    f"error: unsupported os '{os_name}', valid options: {', '.join(sorted(_SUPPORTED_OS))}"
-                )
+    temp_dir = Path.cwd()
+    for platform in platforms:
+        os_name = _get_required(platform, "os")
+        if os_name not in _SUPPORTED_OS:
+            raise SystemExit(
+                f"error: unsupported os '{os_name}', valid options: {', '.join(sorted(_SUPPORTED_OS))}"
+            )
 
-            _generate_ubuntu_sysroot(os_name, platform, temp_dir, output_dir)
+        _generate_ubuntu_sysroot(os_name, platform, temp_dir, output_dir)
 
 
 def _build_parser() -> argparse.ArgumentParser:

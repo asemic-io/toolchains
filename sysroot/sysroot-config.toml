@@ -14,7 +14,9 @@ archs = ["aarch64", "x86_64"]
 # Everything else should either come from the toolchain (e.g. llvm -> asan,
 # compiler_rt, libc++) or be built in tree
 packages = [
+  "libc6",
   "libc6-dev",
+  "linux-libc-dev",
 ]
 
 deleted_patterns = [
