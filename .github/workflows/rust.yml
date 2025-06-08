@@ -68,6 +68,7 @@ jobs:
           tar -cf - $full_name | zstd --ultra -22 -o "../artifacts/$full_name.tar.zst"
 
       - name: Download rust-src Component
+        if: matrix.component == 'rustc' && matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
           component="rust-src"
           version=${{ inputs.rust_version }}
