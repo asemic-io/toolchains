@@ -36,7 +36,7 @@ jobs:
           "clippy",
           "rustfmt",
           "llvm-tools",
-          "rustc-dev"
+          "rustc-dev",
         ]
 
     steps:
@@ -58,6 +58,29 @@ jobs:
           else
             echo "STABLE"
             export full_name="$component-$version-$target"
+            export url_prefix=https://static.rust-lang.org/dist
+          fi
+          
+          xz_name="$full_name.tar.xz"
+          wget "$url_prefix/$xz_name"
+          
+          tar -xJf $xz_name
+          tar -cf - $full_name | zstd --ultra -22 -o "../artifacts/$full_name.tar.zst"
+
+      - name: Download rust-src Component
+        run: |
+          component="rust-src"
+          version=${{ inputs.rust_version }}
+
+          cd downloads
+
+          if [[ $version =~ ^(nightly|beta) ]]; then
+            IFS='/' read -r channel date <<< "$version"
+            export full_name="$component-$channel"
+            export url_prefix=https://static.rust-lang.org/dist/$date
+          else
+            echo "STABLE"
+            export full_name="$component-$version"
             export url_prefix=https://static.rust-lang.org/dist
           fi
           
