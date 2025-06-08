@@ -36,7 +36,8 @@ jobs:
           "clippy",
           "rustfmt",
           "llvm-tools",
-          "rustc-dev"
+          "rustc-dev",
+          "rust-src",
         ]
 
     steps:
