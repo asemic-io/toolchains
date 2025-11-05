@@ -37,6 +37,7 @@ jobs:
           "rustfmt",
           "llvm-tools",
           "rustc-dev",
+          "rust-analyzer",
         ]
 
     steps:
